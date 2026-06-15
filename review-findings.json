@@ -1,0 +1,133 @@
+{
+  "reviewer": "feasibility",
+  "findings": [
+    {
+      "title": "Next.js 16 rendering model not mapped to actual APIs",
+      "severity": "P2",
+      "section": "3. Site Architecture & Sitemap — Rendering Strategy",
+      "why_it_matters": "The plan labels every page type as SSG, ISR, or SSR, but Next.js 16 has a dual caching model — the traditional SSG/ISR/SSR approach (default) and the newer Cache Components model (opt-in via `cacheComponents: true`) with `use cache`, `cacheLife`, and `cacheTag`. The plan never mentions which model to use, never references `generateStaticParams`, `revalidate`, or any of the new cache APIs. An implementer reading Next.js 16 docs will face an unguided architectural decision that affects every route in the project. Comparison pages labeled 'ISR' are particularly ambiguous because the plan provides no revalidation mechanism at all.",
+      "finding_type": "omission",
+      "autofix_class": "manual",
+      "suggested_fix": "Explicitly state which Next.js 16 caching model the project uses. If traditional: document that `cacheComponents: true` is intentionally off, and specify `generateStaticParams` + `export const revalidate` for comparison pages. If Cache Components: replace SSG/ISR/SSR labels with `'use cache'` + `cacheLife` profiles and describe how PPR streaming handles the blog.",
+      "confidence": 75,
+      "evidence": [
+        "Section 3 rendering table: 'Landing, quiz index → SSG', 'Comparison pages → ISR', 'Blog → SSR/SSG'",
+        "Section 18: 'Rendering → SSG + ISR hybrid' with rationale 'Fastest UX, SEO-friendly, cost-effective'",
+        "Grep confirms zero mentions of `generateStaticParams`, `revalidate`, `cacheComponents`, `use cache`, `cacheLife`, or `cacheTag` anywhere in the plan",
+        "Next.js 16 upgrade guide: 'Starting with Next.js 16, you can opt into PPR using the cacheComponents configuration' and 'cacheLife and cacheTag are now stable'",
+        "`next.config.ts` currently empty — no caching-model decision is encoded"
+      ]
+    },
+    {
+      "title": "Quiz completion API route missing input validation and error handling",
+      "severity": "P2",
+      "section": "15. MVP Roadmap — Phase 1, 5. Database Schema",
+      "why_it_matters": "The `POST /api/completions` route accepts user-supplied data (quiz_id, result_id, session_id) with `notNull()` constraints. The plan does not specify any body validation, type checking, error responses for database failures, or handling of malicious/empty payloads. This is a production API endpoint called from client-side code; without validation it will insert garbage data (empty strings, injection payloads) and without error handling a DB connection failure will produce an unhandled 500. The plan provides no specification for response format, status codes, or graceful degradation.",
+      "finding_type": "omission",
+      "autofix_class": "gated_auto",
+      "suggested_fix": "Add a section detailing the API route contract: validate body fields with Zod or Drizzle schema (ensure non-empty, valid quiz_id references), return 400 with structured error on validation failure, return 201 with `{ success: true }` on insert, and return 503 on database unavailability. Add a try/catch with `NextResponse.json({ error: '...' }, { status: 503 })`.",
+      "confidence": 75,
+      "evidence": [
+        "Folder structure shows `app/api/completions/route.ts` but no validation or error handling is described",
+        "Drizzle schema: `quizId: text('quiz_id').notNull()`, `resultId: text('result_id').notNull()`, `sessionId: text('session_id').notNull()` — all non-nullable, no constraints described on the API route",
+        "Phase 1 checklist: 'Completion tracking (POST to API route → insert into PostgreSQL)' — no mention of input validation or error handling"
+      ]
+    },
+    {
+      "title": "YAML content loader missing error handling and parsing library",
+      "severity": "P2",
+      "section": "15. MVP Roadmap — Phase 0, 6. Data Architecture",
+      "why_it_matters": "The plan specifies a 'YAML content loader utility' as a Phase 0 deliverable but provides no error handling specification for missing files, malformed YAML, or schema-invalid content. It also does not name the YAML parsing library (e.g., `js-yaml` or `yaml`). Since all content is YAML-driven, a single bad file can break the entire build. An implementer starts coding without knowing which library to install or how to handle content file failures — they must both choose the parser and design the error recovery strategy.",
+      "finding_type": "omission",
+      "autofix_class": "gated_auto",
+      "suggested_fix": "Specify `js-yaml` as the YAML parsing dependency. Add a short specification: each loader function should wrap `yaml.load()` in try/catch, log a descriptive build error with file path, and either skip the file (graceful degradation) or fail the build with a clear message. Add validation that required fields (id, slug at minimum) exist before returning content.",
+      "confidence": 75,
+      "evidence": [
+        "Phase 0 checklist: 'YAML content loader utility' — no details beyond the name",
+        "Section 6 shows YAML content format but no code for parsing or error handling",
+        "Folder structure lists `src/lib/content/loadQuiz.ts`, `loadType.ts`, etc. but plan never names the YAML parser package"
+      ]
+    },
+    {
+      "title": "Quiz scoring algorithm not specified",
+      "severity": "P2",
+      "section": "6. Data Architecture, 15. MVP Roadmap — Phase 1",
+      "why_it_matters": "The YAML schema shows weighted answers per archetype (e.g., `systems-thinker: 3`) and a `dimensions.weight_map`, but the plan never defines the result calculation algorithm. An implementer must decide whether MVP scoring is simple sum-per-archetype, dimension-weighted, or something else. The risk mitigation says 'Start with simple scored quiz; add multi-dimensional later' but never defines what 'simple scored' means. This design decision affects the quiz engine architecture, result rendering, and data schema — getting it wrong after implementation means reworking the engine.",
+      "finding_type": "omission",
+      "autofix_class": "gated_auto",
+      "suggested_fix": "Define the MVP scoring algorithm explicitly: sum all answer weights per archetype across questions, pick the archetype with the highest total. Document that dimension scoring (using `dimensions.weight_map`) is a post-MVP enhancement. Add pseudocode or a short TypeScript snippet showing the calculation loop.",
+      "confidence": 75,
+      "evidence": [
+        "Quiz YAML shows `weights: { systems-thinker: 3, research-engineer: 2 }` per answer but no calculation logic",
+        "Risk mitigation: 'Start with simple scored quiz; add multi-dimensional later' — 'simple scored' is undefined",
+        "Phase 1 checklist: 'Quiz engine component (render questions, calculate results, animate transitions)' — 'calculate results' is a single line item with no algorithm detail"
+      ]
+    },
+    {
+      "title": "`generateStaticParams` not mentioned for SSG dynamic routes",
+      "severity": "P2",
+      "section": "3. Site Architecture & Sitemap — Rendering Strategy, 15. MVP Roadmap",
+      "why_it_matters": "Dynamic routes like `/types/[slug]`, `/quizzes/[slug]`, `/quizzes/[slug]/[result]`, and `/careers/[slug]` are labeled SSG, but Next.js App Router requires `generateStaticParams` to return the list of all paths for static generation of dynamic segments. Without this export, these routes fall back to dynamic rendering or return 404 at build time. The plan never mentions this required API. An implementer following the spec literally would create the page files but miss the critical SSG wiring, resulting in pages that aren't statically generated.",
+      "finding_type": "omission",
+      "autofix_class": "safe_auto",
+      "suggested_fix": "For each SSG dynamic route, add a note: 'Requires `export async function generateStaticParams()` that loads all relevant slugs from YAML content files and returns `[{ slug: '...' }, ...]`.' For comparison pages (ISR), also specify the `revalidate` export or the equivalent `cacheLife` profile depending on caching model choice.",
+      "confidence": 75,
+      "evidence": [
+        "Section 3 rendering table: Type profile, career, quiz, and result pages all labeled 'SSG'",
+        "Folder structure shows dynamic routes `[slug]`, `[result]`, `[slugs]` — all need generateStaticParams for SSG",
+        "Plan mentions neither `generateStaticParams`, `revalidate`, nor any caching API — zero hits across the entire document"
+      ]
+    },
+    {
+      "title": "AdSense auto-ads contradicts manually defined ad slot positions",
+      "severity": "P2",
+      "section": "10. Ad Placement Strategy, 11. Monetization Roadmap",
+      "why_it_matters": "Section 11 says 'Google AdSense auto-ads (carefully configured)' — auto-ads means Google algorithmically places ads. Section 10 defines exact ad slot positions ('2 in-content + desktop sidebar') with precise page layouts showing where each ad slot sits. These are fundamentally different AdSense modes: auto-ads lets Google decide placement; manual placement requires specific ad units. The plan describes both without acknowledging the contradiction, so an implementer doesn't know which strategy to build. Building manual slot infrastructure that gets overridden by auto-ads is wasted effort.",
+      "finding_type": "error",
+      "autofix_class": "manual",
+      "suggested_fix": "Pick one strategy. If auto-ads: remove the fixed ad slot positions from page layouts and add a note that AdSense will place ads algorithmically. If manual placement: change the wording to 'Google AdSense manual ad units' and add the AdSense ad unit code/ID configuration to the tech stack. The most realistic path is manual placement (the page layout sections are very specific) — update section 11 to say 'manual ad units' instead of 'auto-ads'.",
+      "confidence": 100,
+      "evidence": [
+        "Section 11: 'Google AdSense auto-ads (carefully configured)' — describes Google-controlled ad placement",
+        "Section 10 defines exact manual placements: 'Desktop: Sidebar (1) + In-content (2) | Mobile: In-content (2) only' with precise slot positions in layout diagrams",
+        "Section 10: 'Ad density > 25% of viewport' — a metric that only makes sense with manual placement"
+      ]
+    },
+    {
+      "title": "`content/comparisons.yaml` format not documented",
+      "severity": "P2",
+      "section": "15. MVP Roadmap — Folder Structure",
+      "why_it_matters": "The file `content/comparisons.yaml` is listed in the folder structure and comparison pages are a core content type (66 pages at launch), but the plan provides no YAML schema, field examples, or content structure for this file. Quiz YAML and type YAML both have full annotated examples spanning 50+ lines each. Without an equivalent specification for comparisons, an implementer must design the data model from scratch — a significant architectural decision that the plan should have made.",
+      "finding_type": "omission",
+      "autofix_class": "manual",
+      "suggested_fix": "Add a YAML example for `content/comparisons.yaml` showing at minimum: pair IDs (type-a, type-b), SEO metadata, compatibility notes, conflict notes, and team composition advice. Reference the comparison page layout template to ensure data coverage.",
+      "confidence": 75,
+      "evidence": [
+        "Folder structure: `content/comparisons.yaml` listed as a file",
+        "Section 2: Content count table shows 66 pairwise comparison pages — these are driven by this file",
+        "Quiz YAML (Section 6) has 60+ lines of annotated example; type YAML has 70+ lines. Comparison YAML has zero."
+      ]
+    },
+    {
+      "title": "Comparison route uses unconventional dynamic segment name `[slugs]`",
+      "severity": "P3",
+      "section": "15. MVP Roadmap — Folder Structure",
+      "why_it_matters": "The folder structure shows `app/compare/[slugs]/page.tsx` using `[slugs]` (plural) as a single dynamic segment for URLs like `/compare/systems-thinker-vs-startup-hacker`. The `params.slugs` value would be the full string `systems-thinker-vs-startup-hacker`, requiring manual parsing (split on `-vs-`). While functional, the naming `[slugs]` is unusual and could confuse an implementer into thinking it should be a catch-all `[...slugs]` or that the framework handles the split automatically. No parsing logic is described in the plan.",
+      "finding_type": "omission",
+      "autofix_class": "safe_auto",
+      "suggested_fix": "Rename to `[pair]` for clarity, or keep `[slugs]` but add a note: 'This is a single dynamic segment capturing the full compound key `type-a-vs-type-b`. Extract the two types by splitting `params.pair` on `-vs-`.'",
+      "confidence": 75,
+      "evidence": [
+        "Folder structure: `app/compare/[slugs]/page.tsx` — single dynamic segment named `[slugs]`",
+        "URL pattern: `/compare/systems-thinker-vs-startup-hacker` — compound key needs splitting"
+      ]
+    }
+  ],
+  "residual_risks": [
+    "Google AdSense approval is not guaranteed for a new, content-only site with no established traffic — revenue model depends on approval that may not come in the MVP timeline",
+    "SEO ramp for a brand-new domain with zero backlinks typically takes 6-12 months for meaningful organic traffic, even with 150+ pages; the plan's Month 1-3 traffic projections have no baseline to validate against",
+    "Quiz sharing rates are the primary traffic flywheel input but are entirely unpredictable — the plan has no contingency if organic sharing is low beyond 'invest in OG image quality'",
+    "Build time for 150+ SSG pages with YAML parsing could be significant on each Vercel deploy; the plan flags this risk but provides no estimated build duration or mitigation beyond 'use ISR for comparisons'"
+  ],
+  "deferred_questions": []
+}
